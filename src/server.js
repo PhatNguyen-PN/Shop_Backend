@@ -1,13 +1,13 @@
 require("dotenv").config();
 const app = require("./app");
-const { connectMongo, bindMongoLogs } = require("./db/mongoose");
+const { connectPostgres, bindPostgresLogs } = require("./db/postgres");
 
 const PORT = process.env.PORT || 4000;
 
 (async () => {
-  bindMongoLogs();
-  await connectMongo();
+  bindPostgresLogs();
+  await connectPostgres();
   app.listen(PORT, () => {
-    console.log(`▶ BTCK API listening at http://localhost:${PORT}`);
+    console.log(`BTCK API listening at http://localhost:${PORT}`);
   });
 })();

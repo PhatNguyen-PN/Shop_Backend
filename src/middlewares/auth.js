@@ -1,91 +1,83 @@
 const { verifyToken } = require("../lib/auth");
 const { User } = require("../models/user.model");
 
-// 1. Middleware xác thực 
 async function requireAuth(req, res, next) {
   try {
     const hdr = req.headers.authorization || "";
     const token = hdr.startsWith("Bearer ") ? hdr.split(" ")[1] : null;
 
     if (!token) {
-      return res.status(401).json({ 
-        ok: false, 
-        error: { code: "UNAUTHORIZED", message: "Vui lòng đăng nhập (Missing Token)" } 
+      return res.status(401).json({
+        ok: false,
+        error: { code: "UNAUTHORIZED", message: "Vui long dang nhap (Missing Token)" },
       });
     }
-    
+
     const payload = verifyToken(token);
-    const user = await User.findById(payload.id).lean(); 
+    const user = await User.findById(payload.id);
 
     if (!user) {
-      return res.status(401).json({ 
-        ok: false, 
-        error: { code: "UNAUTHORIZED", message: "User không tồn tại" } 
+      return res.status(401).json({
+        ok: false,
+        error: { code: "UNAUTHORIZED", message: "User khong ton tai" },
       });
     }
 
-    req.user = { 
-      id: String(user._id), 
-      role: user.role, 
-      name: user.name, 
-      email: user.email 
+    req.user = {
+      id: String(user.id),
+      role: user.role,
+      name: user.name,
+      email: user.email,
     };
 
     next();
-  } catch (err) {
-    return res.status(401).json({ 
-      ok: false, 
-      error: { code: "UNAUTHORIZED", message: "Token không hợp lệ hoặc đã hết hạn" } 
+  } catch (_err) {
+    return res.status(401).json({
+      ok: false,
+      error: { code: "UNAUTHORIZED", message: "Token khong hop le hoac da het han" },
     });
   }
 }
 
-// 2. Middleware kiểm tra quyền 
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({ ok: false, error: { code: "UNAUTHORIZED", message: "Yêu cầu đăng nhập" } });
+      return res.status(401).json({ ok: false, error: { code: "UNAUTHORIZED", message: "Yeu cau dang nhap" } });
     }
-    
+
     if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ 
-        ok: false, 
-        error: { code: "FORBIDDEN", message: "Bạn không có quyền thực hiện hành động này" } 
+      return res.status(403).json({
+        ok: false,
+        error: { code: "FORBIDDEN", message: "Ban khong co quyen thuc hien hanh dong nay" },
       });
     }
     next();
   };
 }
 
-// 3. Middleware tùy chọn xác thực (nếu có token thì xác thực, không có thì bỏ qua)
-async function optionalAuth(req, res, next) {
+async function optionalAuth(req, _res, next) {
   try {
     const hdr = req.headers.authorization || "";
     const token = hdr.startsWith("Bearer ") ? hdr.split(" ")[1] : null;
 
-    // Nếu KHÔNG có token -> Cho qua luôn (req.user sẽ là undefined/null) -> Coi là khách vãng lai
     if (!token) {
       return next();
     }
 
-    // Nếu CÓ token -> Thử xác thực
     const payload = verifyToken(token);
-    const user = await User.findById(payload.id).lean();
+    const user = await User.findById(payload.id);
 
-    // Nếu token hợp lệ và tìm thấy user -> Gắn vào req
     if (user) {
-      req.user = { 
-        id: String(user._id), 
-        role: user.role, 
-        name: user.name, 
-        email: user.email 
+      req.user = {
+        id: String(user.id),
+        role: user.role,
+        name: user.name,
+        email: user.email,
       };
     }
-    
-    // Xong xuôi thì next()
+
     next();
-  } catch (err) {
-    // Nếu token lỗi hoặc hết hạn -> Vẫn cho qua (coi như khách vãng lai), không báo lỗi
+  } catch (_err) {
     next();
   }
 }

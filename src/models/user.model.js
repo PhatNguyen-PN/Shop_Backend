@@ -1,51 +1,132 @@
-const { Schema, model } = require("mongoose");
-const bcrypt = require("bcryptjs"); // Cần cài: npm install bcryptjs
+const { query } = require("../db/postgres");
+const { comparePassword, hashPassword } = require("../lib/auth");
 
-const UserSchema = new Schema(
-  {
-    name: { type: String, required: true, trim: true },
-    email: { type: String, required: true, unique: true, lowercase: true, index: true },
-    
-    // Lưu mật khẩu đã mã hóa tại đây
-    passwordHash: { type: String, required: true },
-    
-    // Role: user hoặc admin
-    role: { type: String, enum: ["user", "admin"], default: "user", index: true },
-  },
-  { timestamps: true, versionKey: false }
-);
+function mapUser(row) {
+  if (!row) return null;
+  const passwordHash = row.password_hash;
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    role: row.role,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    async matchPassword(plain) {
+      return comparePassword(plain, passwordHash);
+    },
+    toJSON() {
+      return {
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        role: row.role,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    },
+  };
+}
 
-// --- 1. MIDDLEWARE: Tự động mã hóa trước khi lưu ---
-UserSchema.pre("save", async function (next) {
-  // Nếu passwordHash chưa bị thay đổi (ví dụ chỉ sửa tên), thì bỏ qua bước này
-  if (!this.isModified("passwordHash")) return next();
-
-  try {
-    const salt = await bcrypt.genSalt(10);
-    // Mã hóa chuỗi trong passwordHash và lưu đè lại
-    this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
-    next();
-  } catch (error) {
-    next(error);
+class User {
+  static async findOne(filter) {
+    if (filter.email) {
+      const result = await query("SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1", [filter.email]);
+      return mapUser(result.rows[0]);
+    }
+    return null;
   }
-});
 
-// --- 2. METHOD: So sánh mật khẩu khi đăng nhập ---
-UserSchema.methods.matchPassword = async function (enteredPassword) {
-  // So sánh mật khẩu nhập vào (123456) với mật khẩu mã hóa trong DB ($2a$10$...)
-  return await bcrypt.compare(enteredPassword, this.passwordHash);
-};
+  static async findById(id) {
+    const result = await query("SELECT * FROM users WHERE id = $1 LIMIT 1", [id]);
+    return mapUser(result.rows[0]);
+  }
 
-// --- 3. TOJSON: Xóa thông tin nhạy cảm khi trả về client ---
-UserSchema.set("toJSON", {
-  virtuals: true,
-  transform: (_doc, ret) => {
-    ret.id = ret._id;
-    delete ret._id;
-    delete ret.passwordHash; // Không bao giờ trả về mật khẩu (dù đã mã hóa)
-    return ret;
-  },
-});
+  static async create(payload) {
+    const normalizedEmail = String(payload.email).toLowerCase();
+    const passwordHash = await hashPassword(payload.passwordHash);
+    const result = await query(
+      `INSERT INTO users (name, email, password_hash, role)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [payload.name, normalizedEmail, passwordHash, payload.role || "user"]
+    );
+    return mapUser(result.rows[0]);
+  }
 
-const User = model("User", UserSchema);
+  static async updatePassword(id, nextPassword) {
+    const passwordHash = await hashPassword(nextPassword);
+    const result = await query(
+      `UPDATE users
+       SET password_hash = $2, updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [id, passwordHash]
+    );
+    return mapUser(result.rows[0]);
+  }
+
+  static async countCustomers(keyword = "") {
+    const result = await query(
+      `SELECT COUNT(*)::int AS total
+       FROM users
+       WHERE role <> 'admin'
+         AND ($1 = '' OR name ILIKE $2 OR email ILIKE $2)`,
+      [keyword, `%${keyword}%`]
+    );
+    return result.rows[0]?.total || 0;
+  }
+
+  static async listCustomers({ page, limit, keyword = "" }) {
+    const result = await query(
+      `SELECT id, name, email, role, created_at, updated_at
+       FROM users
+       WHERE role <> 'admin'
+         AND ($1 = '' OR name ILIKE $2 OR email ILIKE $2)
+       ORDER BY created_at DESC
+       LIMIT $3 OFFSET $4`,
+      [keyword, `%${keyword}%`, limit, (page - 1) * limit]
+    );
+    return result.rows.map((row) => mapUser(row).toJSON());
+  }
+
+  static async countUsers(keyword = "", role = "") {
+    const result = await query(
+      `SELECT COUNT(*)::int AS total
+       FROM users
+       WHERE ($1 = '' OR role = $1)
+         AND ($2 = '' OR name ILIKE $3 OR email ILIKE $3 OR role ILIKE $3)`,
+      [role, keyword, `%${keyword}%`]
+    );
+    return result.rows[0]?.total || 0;
+  }
+
+  static async listUsers({ page, limit, keyword = "", role = "" }) {
+    const result = await query(
+      `SELECT id, name, email, role, created_at, updated_at
+       FROM users
+       WHERE ($1 = '' OR role = $1)
+         AND ($2 = '' OR name ILIKE $3 OR email ILIKE $3 OR role ILIKE $3)
+       ORDER BY created_at DESC
+       LIMIT $4 OFFSET $5`,
+      [role, keyword, `%${keyword}%`, limit, (page - 1) * limit]
+    );
+    return result.rows.map((row) => mapUser(row).toJSON());
+  }
+
+  static async updateById(id, payload) {
+    const normalizedEmail = String(payload.email).toLowerCase();
+    const result = await query(
+      `UPDATE users
+       SET name = $2,
+           email = $3,
+           role = $4,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [id, payload.name, normalizedEmail, payload.role]
+    );
+    return mapUser(result.rows[0]);
+  }
+}
+
 module.exports = { User };

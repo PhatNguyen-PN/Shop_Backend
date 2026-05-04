@@ -1,85 +1,95 @@
 const { User } = require("../models/user.model");
-const jwt = require("jsonwebtoken");
+const { signToken } = require("../lib/auth");
 
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET || "bi_mat_khong_bat_mi", {
-    expiresIn: "30d",
-  });
-};
-
-// 1. Đăng ký
 async function register(req, res, next) {
   try {
     const { name, email, password } = req.body;
     const userExists = await User.findOne({ email });
 
     if (userExists) {
-      return res.status(400).json({ ok: false, message: "Email đã tồn tại" });
+      return res.status(400).json({ ok: false, message: "Email da ton tai" });
     }
 
     const user = await User.create({
       name,
       email,
-      passwordHash: password, 
+      passwordHash: password,
       role: "user",
     });
 
-    if (user) {
-      res.status(201).json({
-        ok: true,
-        _id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        token: generateToken(user._id),
-      });
-    } else {
-      res.status(400).json({ ok: false, message: "Dữ liệu không hợp lệ" });
-    }
+    res.status(201).json({
+      ok: true,
+      _id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      token: signToken(user),
+    });
   } catch (error) {
     next(error);
   }
 }
 
-// 2. Đăng nhập
 async function login(req, res, next) {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
 
     if (user && (await user.matchPassword(password))) {
-      res.json({
+      return res.json({
         ok: true,
         _id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
-        token: generateToken(user._id),
+        token: signToken(user),
       });
-    } else {
-      res.status(401).json({ ok: false, message: "Sai email hoặc mật khẩu" });
     }
+
+    return res.status(401).json({ ok: false, message: "Sai email hoac mat khau" });
   } catch (error) {
     next(error);
   }
 }
 
-// 3. [BỔ SUNG] Hàm lấy thông tin User hiện tại (Me)
 async function me(req, res, next) {
   try {
-    // req.user được lấy từ middleware requireAuth
     if (!req.user) {
-      return res.status(401).json({ ok: false, message: "Chưa đăng nhập" });
+      return res.status(401).json({ ok: false, message: "Chua dang nhap" });
     }
-    
-    // Trả về thông tin user
-    res.json({
+
+    return res.json({
       ok: true,
-      user: req.user
+      user: req.user,
     });
   } catch (error) {
     next(error);
   }
 }
 
-module.exports = { register, login, me };
+async function changePassword(req, res, next) {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "Tai khoan khong ton tai" });
+    }
+
+    const isMatch = await user.matchPassword(currentPassword);
+    if (!isMatch) {
+      return res.status(400).json({ ok: false, message: "Mat khau hien tai khong dung" });
+    }
+
+    await User.updatePassword(user.id, newPassword);
+
+    return res.json({
+      ok: true,
+      message: "Da cap nhat mat khau thanh cong",
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = { register, login, me, changePassword };

@@ -11,4 +11,16 @@ const loginSchema = z.object({
   password: z.string().min(6),
 });
 
-module.exports = { registerSchema, loginSchema };
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(6),
+  newPassword: z.string().min(6),
+  confirmPassword: z.string().min(6),
+}).refine((v) => v.newPassword === v.confirmPassword, {
+  message: "Xac nhan mat khau khong khop",
+  path: ["confirmPassword"],
+}).refine((v) => v.currentPassword !== v.newPassword, {
+  message: "Mat khau moi phai khac mat khau hien tai",
+  path: ["newPassword"],
+});
+
+module.exports = { registerSchema, loginSchema, changePasswordSchema };
